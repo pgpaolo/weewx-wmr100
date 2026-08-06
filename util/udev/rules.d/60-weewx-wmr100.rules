@@ -1,0 +1,4 @@
+# Oregon Scientific WMR100 protocol family, including WMR88/WMR88A.
+# Restrict access to the WeeWX service group and disable USB autosuspend.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fde", ATTR{idProduct}=="ca01", GROUP:="weewx", MODE:="0660"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fde", ATTR{idProduct}=="ca01", TEST=="power/control", ATTR{power/control}="on"
