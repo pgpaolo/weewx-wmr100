@@ -25,6 +25,7 @@ This hardened version preserves the meteorological output and sensor mapping of
 the upstream WeeWX 3.5.0 driver, while adding:
 
 * bounded packet buffering and stream resynchronisation;
+* verified recovery of a single residual leading 0xFF framing byte;
 * checksum and packet-length validation;
 * robust USB report validation;
 * timeout classification and automatic USB reopen/reinitialisation;
@@ -57,7 +58,7 @@ import weeutil.weeutil
 log = logging.getLogger(__name__)
 
 DRIVER_NAME = 'WMR100'
-DRIVER_VERSION = '3.5.4-gp4'
+DRIVER_VERSION = '3.5.5-gp5'
 
 _INIT_COMMAND = [0x20, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
 _DATA_REQUEST_COMMAND = [0x01, 0xD0, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
@@ -465,6 +466,7 @@ class WMR100(weewx.drivers.AbstractDevice):
             'checksum_errors': 0,
             'length_errors': 0,
             'parser_resyncs': 0,
+            'parser_leading_ff_recoveries': 0,
             'decoder_errors': 0,
         }
 
@@ -832,20 +834,78 @@ class WMR100(weewx.drivers.AbstractDevice):
 
         computed_checksum = sum(buff[:-2]) & 0xFFFF
         actual_checksum = ((buff[-1] & 0xFF) << 8) + (buff[-2] & 0xFF)
+        leading_ff_recovered = False
+
         if computed_checksum != actual_checksum:
-            self.stats['checksum_errors'] += 1
-            count = self.stats['checksum_errors']
-            if _should_log_count(count, 10):
-                log.warning('Bad WMR100 checksum: calculated 0x%04x, received 0x%04x, '
-                            'length %d, packet %s', computed_checksum,
-                            actual_checksum, len(buff), _hex_bytes(buff))
-            self._trace_event('packet_checksum_error', direction='RX',
-                              packet_type=('0x%02x' % buff[1] if len(buff) > 1 else None),
-                              packet_length=len(buff),
-                              checksum_calculated=computed_checksum,
-                              checksum_received=actual_checksum,
-                              raw_hex=_hex_bytes(buff), occurrence=count)
-            return None
+            # WMR88 field trace 2026-08-07 exposed an FF FF FF boundary edge
+            # case. After consuming the real FF FF delimiter, a third residual
+            # FF can become the first byte of the next frame:
+            #
+            #   FF B0 60 ... 83 01   -> checksum failure, apparent type B0
+            #      B0 60 ... 83 01   -> valid 12-byte clock packet, checksum 0183
+            #
+            # Recover only when removing exactly one leading FF creates a
+            # *known* packet with the documented length and a perfect checksum.
+            # Otherwise preserve the normal checksum-error path. This avoids
+            # turning arbitrary corrupt data into meteorological observations.
+            candidate = list(buff[1:]) if buff and buff[0] == 0xFF else None
+            if candidate is not None and len(candidate) >= 4:
+                candidate_type = candidate[1]
+                candidate_known = (
+                    candidate_type in self.EXPECTED_PACKET_LENGTHS or
+                    candidate_type in self.MIN_PACKET_LENGTHS
+                )
+                candidate_length_ok, _ = self._validate_packet_length(
+                    candidate_type, len(candidate))
+                candidate_checksum = sum(candidate[:-2]) & 0xFFFF
+                candidate_actual = (
+                    ((candidate[-1] & 0xFF) << 8) +
+                    (candidate[-2] & 0xFF)
+                )
+
+                if (candidate_known and candidate_length_ok and
+                        candidate_checksum == candidate_actual):
+                    self.stats['parser_leading_ff_recoveries'] += 1
+                    occurrence = self.stats['parser_leading_ff_recoveries']
+                    if _should_log_count(occurrence, 10):
+                        log.warning(
+                            'Recovered WMR100 packet after residual leading FF: '
+                            'type 0x%02x, length %d, original %s',
+                            candidate_type, len(candidate), _hex_bytes(buff))
+                    self._trace_event(
+                        'packet_leading_ff_recovered', direction='RX',
+                        severity='info',
+                        classification='verified_frame_boundary_recovery',
+                        impact='none_packet_recovered',
+                        action='accept_verified_recovered_frame',
+                        packet_type='0x%02x' % candidate_type,
+                        packet_name=self.PACKET_NAMES.get(candidate_type),
+                        original_length=len(buff),
+                        recovered_length=len(candidate),
+                        checksum_calculated=candidate_checksum,
+                        checksum_received=candidate_actual,
+                        raw_hex=_hex_bytes(buff),
+                        recovered_hex=_hex_bytes(candidate),
+                        occurrence=occurrence)
+                    buff = candidate
+                    computed_checksum = candidate_checksum
+                    actual_checksum = candidate_actual
+                    leading_ff_recovered = True
+
+            if not leading_ff_recovered:
+                self.stats['checksum_errors'] += 1
+                count = self.stats['checksum_errors']
+                if _should_log_count(count, 10):
+                    log.warning('Bad WMR100 checksum: calculated 0x%04x, received 0x%04x, '
+                                'length %d, packet %s', computed_checksum,
+                                actual_checksum, len(buff), _hex_bytes(buff))
+                self._trace_event('packet_checksum_error', direction='RX',
+                                  packet_type=('0x%02x' % buff[1] if len(buff) > 1 else None),
+                                  packet_length=len(buff),
+                                  checksum_calculated=computed_checksum,
+                                  checksum_received=actual_checksum,
+                                  raw_hex=_hex_bytes(buff), occurrence=count)
+                return None
 
         packet_type = buff[1]
         valid_length, reason = self._validate_packet_length(packet_type, len(buff))
@@ -868,7 +928,8 @@ class WMR100(weewx.drivers.AbstractDevice):
             self._trace_event('packet_valid', direction='RX',
                               packet_type='0x%02x' % packet_type,
                               packet_name=self.PACKET_NAMES.get(packet_type),
-                              packet_length=len(buff), raw_hex=_hex_bytes(buff))
+                              packet_length=len(buff), raw_hex=_hex_bytes(buff),
+                              leading_ff_recovered=leading_ff_recovered)
         return buff
 
     def genPackets(self):
