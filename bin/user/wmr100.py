@@ -57,7 +57,7 @@ import weeutil.weeutil
 log = logging.getLogger(__name__)
 
 DRIVER_NAME = 'WMR100'
-DRIVER_VERSION = '3.5.2-gp2'
+DRIVER_VERSION = '3.5.3-gp3'
 
 _INIT_COMMAND = [0x20, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
 _DATA_REQUEST_COMMAND = [0x01, 0xD0, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
@@ -433,6 +433,12 @@ class WMR100(weewx.drivers.AbstractDevice):
         self._trace_sequence = 0
         self._last_success_utc = None
         self._last_success_monotonic = None
+        # When True, the packet parser must discard bytes until a real FF FF
+        # frame delimiter is seen. This is set after operations that can break
+        # byte-stream continuity (USB recovery, command-only reinitialisation,
+        # malformed HID reports, or non-timeout USB read errors).
+        self._stream_resync_required = False
+        self._stream_resync_reason = None
         self._next_stats_log = (time.monotonic() + self.stats_log_interval
                                 if self.stats_log_interval > 0 else None)
         self.stats = {
@@ -644,6 +650,19 @@ class WMR100(weewx.drivers.AbstractDevice):
         self._set_health('closed', 'driver_shutdown')
         self._developer_trace.close()
 
+    def _request_stream_resync(self, reason):
+        """Ask the frame parser to wait for the next real FF FF delimiter.
+
+        A failed/malformed USB transaction or a station reinitialisation can
+        leave the byte stream positioned in the middle of a frame. Decoding
+        that fragment is unsafe because the Oregon checksum is an additive
+        checksum: dropping a leading 0x00 status byte does not change it.
+        """
+        self._stream_resync_required = True
+        self._stream_resync_reason = reason
+        self._trace_event('parser_resync_requested', direction='SYSTEM',
+                          reason=reason)
+
     def _soft_reinitialise_station(self, reason, error=None):
         """Reissue station commands without closing the USB interface.
 
@@ -673,6 +692,7 @@ class WMR100(weewx.drivers.AbstractDevice):
             return
 
         self._set_health('ready', 'commands_reissued')
+        self._request_stream_resync('usb_soft_reinitialisation')
         self._trace_event(
             'usb_soft_reinitialisation_success', direction='SYSTEM',
             reason=reason, occurrence=occurrence,
@@ -698,6 +718,7 @@ class WMR100(weewx.drivers.AbstractDevice):
                 time.sleep(self.wait_before_retry)
             try:
                 self.openPort()
+                self._request_stream_resync('usb_recovery')
                 self._trace_event('usb_recovery_success', direction='SYSTEM',
                                   reason=reason, recovery_cycle=cycle,
                                   recovery_attempt=attempt)
@@ -840,39 +861,87 @@ class WMR100(weewx.drivers.AbstractDevice):
         return buff
 
     def genPackets(self):
-        """Generate checksum- and length-validated station measurement packets."""
-        gen_bytes = weeutil.weeutil.GenWithPeek(self._genBytes_raw())
+        """Generate checksum- and length-validated station measurement packets.
 
-        # Discard a possible partial frame until the first FF FF separator.
-        try:
-            for ibyte in gen_bytes:
-                if gen_bytes.peek() != 0xFF:
-                    break
-        except StopIteration:
-            return
+        The protocol uses ``FF FF`` as the frame delimiter. On startup, or
+        after an operation that may have interrupted USB stream continuity, we
+        deliberately discard bytes until an *actual* delimiter pair is seen.
+        This is important for WMR88/WMR88A because the first USB payload can
+        begin in the middle of a frame. The historical upstream synchroniser
+        could instead drop only the first byte and then accept the remainder.
+        If the dropped byte happened to be 0x00, the weak additive checksum
+        still matched and a valid wind frame (00 48 ...) appeared as an
+        unknown packet type (48 xx ... -> type xx).
+        """
+        gen_bytes = weeutil.weeutil.GenWithPeek(self._genBytes_raw())
 
         buff = []
         discarding_oversize = False
+        need_sync = True
+        sync_reason = 'startup'
+
+        def enter_resync(reason):
+            """Reset local framing state and wait for the next FF FF pair."""
+            nonlocal buff, discarding_oversize, need_sync, sync_reason
+            if not need_sync or buff or discarding_oversize:
+                self.stats['parser_resyncs'] += 1
+            buff = []
+            discarding_oversize = False
+            need_sync = True
+            sync_reason = reason or 'requested'
+            self._trace_event('parser_resync_start', direction='RX',
+                              reason=sync_reason,
+                              occurrence=self.stats['parser_resyncs'])
 
         for ibyte in gen_bytes:
+            # _genBytes_raw() can set this flag while producing the current
+            # byte (for example immediately after a USB reopen).
+            if getattr(self, '_stream_resync_required', False):
+                reason = getattr(self, '_stream_resync_reason', None)
+                self._stream_resync_required = False
+                self._stream_resync_reason = None
+                enter_resync(reason)
+
             try:
                 next_byte = gen_bytes.peek()
             except StopIteration:
                 return
 
+            # peek() may itself have resumed the underlying USB generator and
+            # triggered recovery, so check the request a second time before
+            # interpreting ibyte/next_byte as a frame boundary.
+            if getattr(self, '_stream_resync_required', False):
+                reason = getattr(self, '_stream_resync_reason', None)
+                self._stream_resync_required = False
+                self._stream_resync_reason = None
+                enter_resync(reason)
+
             if ibyte == 0xFF and next_byte == 0xFF:
-                # Consume the second separator byte.
+                # Consume the second delimiter byte. FF FF starts the next
+                # frame; once synchronised it also terminates the frame we
+                # have just accumulated.
                 try:
                     next(gen_bytes)
                 except StopIteration:
                     return
 
-                if not discarding_oversize:
-                    packet = self._process_packet_buffer(buff)
-                    if packet is not None:
-                        yield packet
-                buff = []
-                discarding_oversize = False
+                if need_sync:
+                    need_sync = False
+                    self._trace_event('parser_synchronised', direction='RX',
+                                      reason=sync_reason)
+                    sync_reason = None
+                else:
+                    if not discarding_oversize:
+                        packet = self._process_packet_buffer(buff)
+                        if packet is not None:
+                            yield packet
+                    buff = []
+                    discarding_oversize = False
+                continue
+
+            # Until a real delimiter pair has been observed, every byte is a
+            # partial/unknown frame fragment and must be ignored.
+            if need_sync:
                 continue
 
             if discarding_oversize:
@@ -953,6 +1022,7 @@ class WMR100(weewx.drivers.AbstractDevice):
                 self.stats['usb_errors'] += 1
                 consecutive_errors += 1
                 consecutive_timeouts = 0
+                self._request_stream_resync('usb_read_error')
                 self._set_health('degraded', 'usb_read_error')
                 log.warning('WMR100 USB read error (%d/%d): %s',
                             consecutive_errors, self.max_tries, e)
@@ -970,6 +1040,7 @@ class WMR100(weewx.drivers.AbstractDevice):
             except Exception as e:
                 self.stats['usb_errors'] += 1
                 consecutive_errors += 1
+                self._request_stream_resync('unexpected_usb_read_error')
                 self._set_health('degraded', 'unexpected_usb_read_error')
                 self._trace_event('usb_read_unexpected_error', direction='RX',
                                   error=str(e),
@@ -1004,6 +1075,7 @@ class WMR100(weewx.drivers.AbstractDevice):
             if validation_error is not None:
                 self.stats['usb_malformed_reports'] += 1
                 consecutive_errors += 1
+                self._request_stream_resync('malformed_usb_report')
                 consecutive_timeouts = 0
                 count = self.stats['usb_malformed_reports']
                 if _should_log_count(count, 10):
