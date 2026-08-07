@@ -57,7 +57,7 @@ import weeutil.weeutil
 log = logging.getLogger(__name__)
 
 DRIVER_NAME = 'WMR100'
-DRIVER_VERSION = '3.5.3-gp3'
+DRIVER_VERSION = '3.5.4-gp4'
 
 _INIT_COMMAND = [0x20, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
 _DATA_REQUEST_COMMAND = [0x01, 0xD0, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
@@ -445,6 +445,10 @@ class WMR100(weewx.drivers.AbstractDevice):
             'usb_reports': 0,
             'usb_payload_bytes': 0,
             'usb_timeouts': 0,
+            'usb_timeout_episodes': 0,
+            'usb_timeout_recoveries': 0,
+            'usb_timeout_warning_episodes': 0,
+            'usb_timeout_max_consecutive': 0,
             'usb_errors': 0,
             'usb_spurious_no_error': 0,
             'usb_malformed_reports': 0,
@@ -691,7 +695,10 @@ class WMR100(weewx.drivers.AbstractDevice):
             self._recover_usb('soft_reinitialisation_failed', e)
             return
 
-        self._set_health('ready', 'commands_reissued')
+        # Commands were accepted, but the live stream has not yet proved that
+        # data flow recovered. Keep a warning state until the next successful
+        # USB read confirms recovery.
+        self._set_health('warning', 'commands_reissued_waiting_for_data')
         self._request_stream_resync('usb_soft_reinitialisation')
         self._trace_event(
             'usb_soft_reinitialisation_success', direction='SYSTEM',
@@ -719,6 +726,10 @@ class WMR100(weewx.drivers.AbstractDevice):
             try:
                 self.openPort()
                 self._request_stream_resync('usb_recovery')
+                # Reopening the interface proves that USB enumeration and
+                # initialisation succeeded, not yet that weather data resumed.
+                # Stay in recovering state until a valid read/payload arrives.
+                self._set_health('recovering', 'usb_recovery_waiting_for_data')
                 self._trace_event('usb_recovery_success', direction='SYSTEM',
                                   reason=reason, recovery_cycle=cycle,
                                   recovery_attempt=attempt)
@@ -961,9 +972,17 @@ class WMR100(weewx.drivers.AbstractDevice):
                 discarding_oversize = True
 
     def _genBytes_raw(self):
-        """Generate payload bytes extracted from validated eight-byte USB reports."""
+        """Generate payload bytes extracted from validated eight-byte USB reports.
+
+        USB interrupt timeouts are expected on this protocol because sensor RF
+        updates can be much slower than the USB read timeout. A timeout episode
+        therefore remains informational until ``timeout_warning_threshold`` is
+        reached. Only then does the driver health move to ``warning``.
+        """
         consecutive_timeouts = 0
         consecutive_errors = 0
+        timeout_episode_started_monotonic = None
+        timeout_episode_number = 0
 
         while True:
             if self.devh is None:
@@ -984,7 +1003,37 @@ class WMR100(weewx.drivers.AbstractDevice):
                     self.stats['usb_timeouts'] += 1
                     consecutive_timeouts += 1
                     consecutive_errors = 0
-                    self._set_health('degraded', 'usb_read_timeout')
+
+                    if consecutive_timeouts == 1:
+                        self.stats['usb_timeout_episodes'] += 1
+                        timeout_episode_number = self.stats['usb_timeout_episodes']
+                        timeout_episode_started_monotonic = time.monotonic()
+
+                    self.stats['usb_timeout_max_consecutive'] = max(
+                        self.stats['usb_timeout_max_consecutive'],
+                        consecutive_timeouts)
+
+                    # A single 15-second interrupt timeout is normal for the
+                    # WMR100/WMR88 family: RF sensors commonly update every
+                    # 40-100+ seconds. Keep health unchanged until the model's
+                    # configured warning threshold is actually reached.
+                    if consecutive_timeouts >= self.timeout_warning_threshold:
+                        if consecutive_timeouts == self.timeout_warning_threshold:
+                            self.stats['usb_timeout_warning_episodes'] += 1
+                        self._set_health('warning', 'usb_timeout_threshold_reached')
+                        severity = 'warning'
+                    else:
+                        severity = 'info'
+
+                    # Recovery/reinitialisation thresholds are operationally
+                    # more significant than an ordinary warning.
+                    if (self.timeout_reinit_threshold > 0 and
+                            consecutive_timeouts >= self.timeout_reinit_threshold):
+                        severity = 'warning'
+                    if (self.timeout_recovery_threshold > 0 and
+                            consecutive_timeouts >= self.timeout_recovery_threshold):
+                        severity = 'error'
+
                     important_thresholds = {
                         self.timeout_warning_threshold,
                         self.timeout_reinit_threshold,
@@ -999,11 +1048,19 @@ class WMR100(weewx.drivers.AbstractDevice):
                                   self.model, consecutive_timeouts,
                                   self.stats['usb_timeouts'])
                     self._trace_event(
-                        'usb_read_timeout', direction='RX', error=str(e),
-                        errno=_exception_errno(e),
+                        'usb_read_timeout', direction='RX', severity=severity,
+                        classification=(
+                            'timeout_threshold_reached'
+                            if consecutive_timeouts >= self.timeout_warning_threshold
+                            else 'poll_timeout_no_data'),
+                        error=str(e), errno=_exception_errno(e),
                         timeout_seconds=self.timeout,
+                        timeout_episode=timeout_episode_number,
                         timeout_consecutive=consecutive_timeouts,
                         timeout_total=self.stats['usb_timeouts'],
+                        timeout_warning_threshold=self.timeout_warning_threshold,
+                        timeout_reinit_threshold=self.timeout_reinit_threshold,
+                        timeout_recovery_threshold=self.timeout_recovery_threshold,
                         last_success_utc=self._last_success_utc,
                         seconds_since_last_success=(
                             round(time.monotonic() - self._last_success_monotonic, 3)
@@ -1016,6 +1073,8 @@ class WMR100(weewx.drivers.AbstractDevice):
                             consecutive_timeouts >= self.timeout_recovery_threshold):
                         self._recover_usb('consecutive_usb_timeouts', e)
                         consecutive_timeouts = 0
+                        timeout_episode_started_monotonic = None
+                        timeout_episode_number = 0
                     self._maybe_log_stats()
                     continue
 
@@ -1093,10 +1152,47 @@ class WMR100(weewx.drivers.AbstractDevice):
                     time.sleep(min(self.wait_before_retry, 1.0))
                 continue
 
+            recovered_timeouts = consecutive_timeouts
+            recovered_episode = timeout_episode_number
+            now_monotonic = time.monotonic()
+            recovery_latency = (
+                round(max(0.0, now_monotonic - timeout_episode_started_monotonic), 3)
+                if recovered_timeouts > 0 and timeout_episode_started_monotonic is not None
+                else None)
+            previous_success_utc = self._last_success_utc
+            seconds_since_last_success = (
+                round(max(0.0, now_monotonic - self._last_success_monotonic), 3)
+                if recovered_timeouts > 0 and self._last_success_monotonic is not None
+                else None)
+
             consecutive_timeouts = 0
+            timeout_episode_started_monotonic = None
+            timeout_episode_number = 0
             consecutive_errors = 0
             self.stats['usb_reports'] += 1
             self.stats['usb_payload_bytes'] += payload_count
+
+            # A payload-bearing report is the authoritative last-data timestamp.
+            # Update it before emitting usb_read_recovered so the event contains
+            # both the previous and the newly recovered success timestamps.
+            if payload_count > 0:
+                self._last_success_utc = _utc_now_string()
+                self._last_success_monotonic = now_monotonic
+
+            if recovered_timeouts > 0:
+                self.stats['usb_timeout_recoveries'] += 1
+                self._set_health('healthy', 'usb_read_recovered')
+                self._trace_event(
+                    'usb_read_recovered', direction='RX', severity='info',
+                    classification='automatic_read_recovery',
+                    timeout_episode=recovered_episode,
+                    recovered_timeouts=recovered_timeouts,
+                    timeout_total=self.stats['usb_timeouts'],
+                    recovery_latency_seconds=recovery_latency,
+                    silence_seconds=seconds_since_last_success,
+                    payload_count=payload_count,
+                    previous_success_utc=previous_success_utc,
+                    last_success_utc=self._last_success_utc)
 
             if self.developer_trace_raw_reports:
                 self._trace_event('usb_report', direction='RX',
@@ -1105,8 +1201,6 @@ class WMR100(weewx.drivers.AbstractDevice):
                                   raw_hex=_hex_bytes(report))
 
             if payload_count > 0:
-                self._last_success_utc = _utc_now_string()
-                self._last_success_monotonic = time.monotonic()
                 self._set_health('healthy', 'usb_payload_received')
                 for value in report[1:payload_count + 1]:
                     yield int(value) & 0xFF
