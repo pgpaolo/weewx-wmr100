@@ -27,7 +27,7 @@ Any explicitly configured value overrides the model profile.
 
 Thresholds count consecutive USB read timeouts, not missing individual RF sensors.
 
-- `timeout_warning_threshold`: health changes to degraded and a warning is emitted.
+- `timeout_warning_threshold`: health changes to `warning`; lower timeout counts remain informational and do not change health.
 - `timeout_reinit_threshold`: initialization commands are resent without closing the USB handle.
 - `timeout_recovery_threshold`: the interface is released, rediscovered, reopened, reclaimed and initialized.
 - `recovery_max_tries`: failed complete recovery cycles allowed before `RetriesExceeded`.

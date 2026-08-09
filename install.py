@@ -13,7 +13,7 @@ class WMR100WMR88Installer(ExtensionInstaller):
 
     def __init__(self):
         super(WMR100WMR88Installer, self).__init__(
-            version='3.5.2-gp2',
+            version='3.5.6-gp6',
             name='wmr100-wmr88-hardened',
             description=(
                 'Hardened WeeWX USB driver for Oregon Scientific '

@@ -26,6 +26,7 @@ the upstream WeeWX 3.5.0 driver, while adding:
 
 * bounded packet buffering and stream resynchronisation;
 * verified recovery of a single residual leading 0xFF framing byte;
+* native console forecast-code output as WeeWX `forecastIcon`;
 * checksum and packet-length validation;
 * robust USB report validation;
 * timeout classification and automatic USB reopen/reinitialisation;
@@ -58,7 +59,7 @@ import weeutil.weeutil
 log = logging.getLogger(__name__)
 
 DRIVER_NAME = 'WMR100'
-DRIVER_VERSION = '3.5.5-gp5'
+DRIVER_VERSION = '3.5.6-gp6'
 
 _INIT_COMMAND = [0x20, 0x00, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
 _DATA_REQUEST_COMMAND = [0x01, 0xD0, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00]
@@ -276,6 +277,11 @@ class WMR100(weewx.drivers.AbstractDevice):
 
     DEFAULT_MAP = {
         'pressure': 'pressure',
+        # Native forecast code carried by the console pressure packet.
+        # WMR200 exposes the equivalent observation as forecastIcon; using the
+        # same WeeWX field keeps skins/services consistent without changing
+        # any meteorological calculation.
+        'forecastIcon': 'forecast_code',
         'windSpeed': 'wind_speed',
         'windDir': 'wind_dir',
         'windGust': 'wind_gust',
@@ -1360,8 +1366,12 @@ class WMR100(weewx.drivers.AbstractDevice):
         console_barometer = float(((packet[5] & 0x0F) << 8) + packet[4])
         record = {
             'pressure': station_pressure,
-            # Not mapped by default because WeeWX calculates barometer using
-            # station altitude, and WMRS200 consoles cannot always store it.
+            # Protocol-level relative/sea-level pressure reported by the
+            # console. It is intentionally NOT mapped to WeeWX `barometer` or
+            # `altimeter`: official WeeWX handling for the WMR100 family keeps
+            # `pressure` as hardware data and calculates barometer/altimeter in
+            # StdWXCalculate from station altitude. Keeping this diagnostic
+            # value internal avoids semantic changes to production archives.
             'console_barometer': console_barometer,
             'forecast_code': packet[3] >> 4,
             'previous_forecast_code': packet[5] >> 4,

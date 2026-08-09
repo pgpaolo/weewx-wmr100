@@ -25,7 +25,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 installer = module.loader()
 
-assert installer['version'] == '3.5.2-gp2'
+assert installer['version'] == '3.5.6-gp6'
 assert installer['name'] == 'wmr100-wmr88-hardened'
 assert installer['files'] == [('bin/user', ['bin/user/wmr100.py'])]
 assert (install_path.parent / 'bin' / 'user' / 'wmr100.py').is_file()

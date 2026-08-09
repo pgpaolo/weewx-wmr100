@@ -5,7 +5,7 @@
 
 Hardened WeeWX USB driver for Oregon Scientific stations that expose the WMR100 low-speed HID protocol, with an explicit operating profile for **WMR88 and WMR88A**.
 
-This repository is based on the WeeWX `wmr100.py` driver version `3.5.0`. Release `3.5.2-gp2` preserves the upstream meteorological mapping while adding USB recovery, packet validation, parser resynchronisation, model-aware WMR88 initialization and a rotating JSONL developer trace.
+This repository is based on the WeeWX `wmr100.py` driver version `3.5.0`. Release `3.5.6-gp6` preserves the upstream meteorological mapping while adding USB recovery, packet validation, parser resynchronisation, model-aware WMR88 initialization and a rotating JSONL developer trace.
 
 > **Validation status:** automated protocol and recovery tests pass. Long-duration testing with real WMR88/WMR88A hardware is still recommended before unattended production use.
 
@@ -35,6 +35,11 @@ The WMR88/WMR88A family commonly uses:
 
 ## Main improvements
 
+- Exposes the forecast code sent natively by the console pressure packet as the standard WeeWX `forecastIcon` observation.
+- Keeps WMR100 `barometer` and `altimeter` software-calculated by `StdWXCalculate`; the console relative-pressure value remains diagnostic-only.
+- Recovers a verified WMR88/WMR100 frame when a single residual leading `0xFF` is left at an `FF FF FF` boundary.
+- Keeps isolated USB polling timeouts informational; health changes only when the configured warning threshold is reached.
+- Emits `usb_read_recovered` when USB reads resume after a timeout episode.
 - Distinguishes ordinary USB polling timeouts from real I/O failures.
 - Re-sends initialization commands before performing a full USB reopen.
 - Releases, re-enumerates, reclaims and reinitializes the USB interface after prolonged silence.
@@ -85,8 +90,8 @@ sudo journalctl -u weewx -n 100 --no-pager
 ## Installation from a release ZIP — WeeWX 5
 
 ```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.2-gp2.zip
-cd weewx-wmr100-wmr88-hardened-3.5.2-gp2
+unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
+cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
 sudo ./install-udev-rule.sh
 sudo weectl extension install . --yes
 sudo weectl station reconfigure --driver=user.wmr100
@@ -198,7 +203,7 @@ sudo journalctl -u weewx -f
 Expected startup entry:
 
 ```text
-WMR100 driver version is 3.5.2-gp2
+WMR100 driver version is 3.5.6-gp6
 ```
 
 Run repository tests without a physical station:

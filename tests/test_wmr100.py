@@ -125,14 +125,31 @@ class Trace:
         pass
 
 
+
+
+class CapturingTrace:
+    enabled = True
+
+    def __init__(self):
+        self.events = []
+
+    def write(self, payload):
+        self.events.append(dict(payload))
+
+    def close(self):
+        pass
+
+
 STAT_KEYS = [
-    'usb_reports', 'usb_payload_bytes', 'usb_timeouts', 'usb_errors',
+    'usb_reports', 'usb_payload_bytes', 'usb_timeouts',
+    'usb_timeout_episodes', 'usb_timeout_recoveries',
+    'usb_timeout_warning_episodes', 'usb_timeout_max_consecutive', 'usb_errors',
     'usb_spurious_no_error', 'usb_malformed_reports',
     'usb_soft_reinitialisations', 'usb_soft_reinitialisation_failures',
     'usb_recovery_cycles', 'usb_recovery_attempts', 'usb_recovery_failures',
     'packets_valid', 'packets_decoded', 'packets_unmapped', 'packets_unknown',
     'packets_malformed', 'checksum_errors', 'length_errors', 'parser_resyncs',
-    'decoder_errors'
+    'parser_leading_ff_recoveries', 'decoder_errors'
 ]
 
 
@@ -155,6 +172,8 @@ def make_driver():
     driver._last_success_monotonic = None
     driver.stats_log_interval = 0
     driver._next_stats_log = None
+    driver._stream_resync_required = False
+    driver._stream_resync_reason = None
     driver.stats = {key: 0 for key in STAT_KEYS}
     return driver
 
@@ -196,6 +215,22 @@ assert record['console_barometer'] == 1005.0
 assert record['forecast_code'] == 0
 assert record['previous_forecast_code'] == 3
 
+# Regression gp6: the native console forecast code is exposed through the
+# standard WeeWX forecastIcon observation without mapping console pressure to
+# barometer/altimeter.
+assert mod.WMR100.DEFAULT_MAP['forecastIcon'] == 'forecast_code'
+assert 'barometer' not in mod.WMR100.DEFAULT_MAP
+assert 'altimeter' not in mod.WMR100.DEFAULT_MAP
+
+driver_forecast = make_driver()
+driver_forecast.genPackets = lambda: iter([samples[0x46]])
+loop = list(driver_forecast.genLoopPackets())
+assert len(loop) == 1
+assert loop[0]['pressure'] == 1005.0
+assert loop[0]['forecastIcon'] == 0
+assert 'barometer' not in loop[0]
+assert 'altimeter' not in loop[0]
+
 record = driver._rain_packet(samples[0x41])
 assert abs(record['rain_rate'] - 7.67) < 1e-9
 assert abs(record['rain_total'] - 0.37) < 1e-9
@@ -221,6 +256,78 @@ wrong_len[-2] = checksum & 0xff
 wrong_len[-1] = (checksum >> 8) & 0xff
 assert driver._process_packet_buffer(wrong_len) is None
 assert driver.stats['length_errors'] == 1
+
+# Regression gp5: a real WMR88 clock frame was observed immediately after
+# startup with one residual leading FF left after an FF FF FF delimiter run.
+# The 13-byte buffer fails checksum, while removing exactly one leading FF
+# produces the documented 12-byte clock packet with a perfect checksum.
+real_wmr88_clock = [0xb0, 0x60, 0x00, 0x00, 0x38, 0x12, 0x07, 0x08,
+                    0x1a, 0x00, 0x83, 0x01]
+leading_ff_clock = [0xff] + real_wmr88_clock
+assert sum(real_wmr88_clock[:-2]) == ((real_wmr88_clock[-1] << 8) + real_wmr88_clock[-2])
+driver_gp5 = make_driver()
+trace_gp5 = CapturingTrace()
+driver_gp5._developer_trace = trace_gp5
+assert driver_gp5._process_packet_buffer(leading_ff_clock) == real_wmr88_clock
+assert driver_gp5.stats['parser_leading_ff_recoveries'] == 1
+assert driver_gp5.stats['checksum_errors'] == 0
+recovery_events = [e for e in trace_gp5.events
+                   if e.get('event') == 'packet_leading_ff_recovered']
+assert len(recovery_events) == 1
+assert recovery_events[0]['packet_type'] == '0x60'
+assert recovery_events[0]['packet_name'] == 'clock'
+assert recovery_events[0]['severity'] == 'info'
+assert recovery_events[0]['impact'] == 'none_packet_recovered'
+assert recovery_events[0]['original_length'] == 13
+assert recovery_events[0]['recovered_length'] == 12
+assert recovery_events[0]['checksum_calculated'] == 0x0183
+assert recovery_events[0]['checksum_received'] == 0x0183
+
+# Full framing regression: FF FF FF followed by the real WMR88 clock frame
+# must emit one valid clock packet rather than a checksum error.
+triple_ff_stream = ([0xff, 0xff, 0xff] + real_wmr88_clock + [0xff, 0xff])
+driver_triple = make_driver()
+driver_triple._genBytes_raw = lambda: iter(triple_ff_stream)
+assert list(driver_triple.genPackets()) == [real_wmr88_clock]
+assert driver_triple.stats['parser_leading_ff_recoveries'] == 1
+assert driver_triple.stats['checksum_errors'] == 0
+
+# Safety regression: a leading FF is never stripped unless the candidate is
+# known, has the correct length, and passes checksum.
+invalid_leading_ff = [0xff] + list(real_wmr88_clock)
+invalid_leading_ff[-2] ^= 0x01
+driver_invalid_ff = make_driver()
+assert driver_invalid_ff._process_packet_buffer(invalid_leading_ff) is None
+assert driver_invalid_ff.stats['parser_leading_ff_recoveries'] == 0
+assert driver_invalid_ff.stats['checksum_errors'] == 1
+
+# Regression: real WMR88 wind frame observed on 2026-08-07.
+# When the USB generator starts at 00 48 ... without a preceding delimiter,
+# that first fragment is not trustworthy and must be discarded in full. The
+# old synchroniser dropped only the 00, leaving a checksum-valid 48 0c ...
+# fragment that was later reported as unknown packet type 0x0c.
+real_wmr88_wind = [0x00, 0x48, 0x0c, 0x0c, 0x13, 0x30, 0x01, 0x00,
+                   0x20, 0xc4, 0x00]
+assert sum(real_wmr88_wind[:-2]) == ((real_wmr88_wind[-1] << 8) + real_wmr88_wind[-2])
+record = driver._wind_packet(real_wmr88_wind)
+assert record['wind_dir'] == 270.0
+assert abs(record['wind_speed'] - 1.9) < 1e-9
+assert abs(record['wind_gust'] - 1.9) < 1e-9
+
+# Start in the middle of a frame (no initial FF FF). Only the complete frame
+# after the first real delimiter must be emitted.
+partial_start_stream = (real_wmr88_wind + [0xff, 0xff] +
+                        samples[0x47] + [0xff, 0xff])
+driver_partial = make_driver()
+driver_partial._genBytes_raw = lambda: iter(partial_start_stream)
+assert list(driver_partial.genPackets()) == [samples[0x47]]
+assert driver_partial.stats['packets_unknown'] == 0
+
+# The same wind frame is accepted normally when preceded by a real delimiter.
+framed_wind_stream = ([0xff, 0xff] + real_wmr88_wind + [0xff, 0xff])
+driver_framed = make_driver()
+driver_framed._genBytes_raw = lambda: iter(framed_wind_stream)
+assert list(driver_framed.genPackets()) == [real_wmr88_wind]
 
 # Full stream framing with FF FF separators.
 stream = ([0xff, 0xff] + samples[0x47] + [0xff, 0xff] +
@@ -308,6 +415,83 @@ assert instance.timeout_reinit_threshold == 12
 assert instance.timeout_recovery_threshold == 20
 assert instance.max_remote_channels == 3
 assert handle.controls == [mod._INIT_COMMAND, mod._DATA_REQUEST_COMMAND]
+instance.closePort()
+
+# Regression gp4: isolated USB timeout remains informational and healthy.
+# The real WMR88 trace showed many single 15-second timeouts followed by a
+# normal report a few seconds later. These must not mark the driver degraded.
+handle = FakeHandle([
+    [1, 0x10, 0, 0, 0, 0, 0, 0],
+    TimeoutUSBError('Operation timed out', 110),
+    [1, 0x11, 0, 0, 0, 0, 0, 0],
+])
+device = FakeDevice([handle])
+usb.busses = lambda: [FakeBus(device)]
+instance = mod.WMR100(model='WMR88', developer_trace=False,
+                      stats_log_interval=0, wait_before_retry=0,
+                      command_delay=0)
+trace = CapturingTrace()
+instance._developer_trace = trace
+gen = instance._genBytes_raw()
+assert next(gen) == 0x10
+assert instance._health_state == 'healthy'
+assert next(gen) == 0x11
+assert instance._health_state == 'healthy'
+timeout_events = [e for e in trace.events if e.get('event') == 'usb_read_timeout']
+recovered_events = [e for e in trace.events if e.get('event') == 'usb_read_recovered']
+assert len(timeout_events) == 1
+assert timeout_events[0]['severity'] == 'info'
+assert timeout_events[0]['classification'] == 'poll_timeout_no_data'
+assert timeout_events[0]['timeout_consecutive'] == 1
+assert timeout_events[0]['health_state'] == 'healthy'
+assert len(recovered_events) == 1
+assert recovered_events[0]['recovered_timeouts'] == 1
+assert recovered_events[0]['health_state'] == 'healthy'
+assert instance.stats['usb_timeout_episodes'] == 1
+assert instance.stats['usb_timeout_recoveries'] == 1
+assert instance.stats['usb_timeout_warning_episodes'] == 0
+assert instance.stats['usb_timeout_max_consecutive'] == 1
+assert not any(
+    e.get('event') == 'health_state_change' and e.get('new_state') == 'degraded'
+    for e in trace.events
+)
+instance.closePort()
+
+# Regression gp4: health changes only when the warning threshold is reached,
+# then returns to healthy with one explicit usb_read_recovered event.
+handle = FakeHandle([
+    [1, 0x20, 0, 0, 0, 0, 0, 0],
+    TimeoutUSBError('Operation timed out', 110),
+    TimeoutUSBError('Operation timed out', 110),
+    [1, 0x21, 0, 0, 0, 0, 0, 0],
+])
+device = FakeDevice([handle])
+usb.busses = lambda: [FakeBus(device)]
+instance = mod.WMR100(model='WMR88', developer_trace=False,
+                      stats_log_interval=0, wait_before_retry=0,
+                      command_delay=0, timeout_warning_threshold=2,
+                      timeout_reinit_threshold=0,
+                      timeout_recovery_threshold=20)
+trace = CapturingTrace()
+instance._developer_trace = trace
+gen = instance._genBytes_raw()
+assert next(gen) == 0x20
+assert next(gen) == 0x21
+timeout_events = [e for e in trace.events if e.get('event') == 'usb_read_timeout']
+assert [e['severity'] for e in timeout_events] == ['info', 'warning']
+assert timeout_events[1]['classification'] == 'timeout_threshold_reached'
+assert timeout_events[1]['timeout_consecutive'] == 2
+health_changes = [
+    (e.get('previous_state'), e.get('new_state'), e.get('reason'))
+    for e in trace.events if e.get('event') == 'health_state_change'
+]
+assert ('healthy', 'warning', 'usb_timeout_threshold_reached') in health_changes
+assert ('warning', 'healthy', 'usb_read_recovered') in health_changes
+recovered_events = [e for e in trace.events if e.get('event') == 'usb_read_recovered']
+assert len(recovered_events) == 1
+assert recovered_events[0]['recovered_timeouts'] == 2
+assert instance.stats['usb_timeout_warning_episodes'] == 1
+assert instance.stats['usb_timeout_max_consecutive'] == 2
 instance.closePort()
 
 # WMR88 soft reinitialisation after 12 timeouts, without reopening the device.

@@ -11,8 +11,8 @@ weewx-wmr100-wmr88-hardened
 Estrarre il pacchetto e aprire la directory:
 
 ```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.2-gp2.zip
-cd weewx-wmr100-wmr88-hardened-3.5.2-gp2
+unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
+cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
 ```
 
 Nel file `README.md` sostituire tutte le occorrenze di `OWNER` con il proprio nome utente o organizzazione GitHub:
@@ -36,7 +36,7 @@ Non inizializzarlo con README, licenza o `.gitignore`, perché questi file sono 
 ```bash
 git init -b main
 git add .
-git commit -m "Initial release 3.5.2-gp2"
+git commit -m "Release 3.5.6-gp6"
 git remote add origin \
   https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened.git
 git push -u origin main
@@ -45,8 +45,8 @@ git push -u origin main
 ## 4. Tag della release
 
 ```bash
-git tag -a v3.5.2-gp2 -m "WMR100/WMR88 hardened driver 3.5.2-gp2"
-git push origin v3.5.2-gp2
+git tag -a v3.5.6-gp6 -m "WMR100/WMR88 hardened driver 3.5.6-gp6"
+git push origin v3.5.6-gp6
 ```
 
 ## 5. Release GitHub
@@ -55,12 +55,12 @@ Nella pagina del repository:
 
 1. aprire **Releases**;
 2. scegliere **Draft a new release**;
-3. selezionare il tag `v3.5.2-gp2`;
-4. titolo: `WMR100/WMR88 hardened driver 3.5.2-gp2`;
-5. copiare il contenuto di `RELEASE-NOTES-3.5.2-gp2.md`;
+3. selezionare il tag `v3.5.6-gp6`;
+4. titolo: `WMR100/WMR88 hardened driver 3.5.6-gp6`;
+5. copiare il contenuto di `RELEASE-NOTES-3.5.6-gp6.md`;
 6. allegare:
-   - `weewx-wmr100-wmr88-hardened-3.5.2-gp2.zip`;
-   - `weewx-wmr100-wmr88-hardened-3.5.2-gp2.zip.sha256`.
+   - `weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip`;
+   - `weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip.sha256`.
 
 ## 6. Verifica GitHub Actions
 
@@ -86,7 +86,7 @@ Per una release versionata:
 
 ```bash
 sudo weectl extension install \
-  https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened/archive/refs/tags/v3.5.2-gp2.zip
+  https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened/archive/refs/tags/v3.5.6-gp6.zip
 ```
 
 Successivamente:

@@ -2,7 +2,21 @@
 
 Driver USB WeeWX per le console Oregon Scientific che espongono il protocollo HID della famiglia WMR100, con un profilo operativo esplicito per **WMR88 e WMR88A**.
 
-La release `3.5.2-gp2` deriva dal driver WeeWX `wmr100.py` 3.5.0 e conserva la mappatura meteorologica originale. Aggiunge recovery USB, validazione dei pacchetti, resincronizzazione del flusso, inizializzazione specifica WMR88 e trace sviluppatore JSONL ruotato.
+La release `3.5.6-gp6` deriva dal driver WeeWX `wmr100.py` 3.5.0 e conserva la mappatura meteorologica originale. Aggiunge recovery USB, validazione dei pacchetti, resincronizzazione del flusso, inizializzazione specifica WMR88 e trace sviluppatore JSONL ruotato.
+
+### Novità 3.5.6-gp6
+
+- Espone come `forecastIcon` il codice di previsione trasmesso nativamente dalla console nel pacchetto pressione `0x46`.
+- Non altera `barometer` o `altimeter`: per la famiglia WMR100 restano calcolati da WeeWX `StdWXCalculate`, preservando il comportamento corretto e stabile.
+- Mantiene `console_barometer` come dato interno/diagnostico, senza inserirlo negli archivi con un nome semanticamente errato.
+
+- Recupero verificato del raro caso `FF FF FF`: un singolo `0xFF` residuo viene rimosso solo se il frame risultante ha tipo noto, lunghezza corretta e checksum valido.
+- Nuovo evento diagnostico `packet_leading_ff_recovered` e relativo contatore.
+
+- I timeout USB isolati restano informativi e non portano più lo stato del driver a `degraded`.
+- Lo stato passa a `warning` soltanto al raggiungimento di `timeout_warning_threshold`.
+- Alla ripresa della lettura viene emesso l'evento `usb_read_recovered`, con episodio, numero di timeout recuperati e tempi di recovery.
+- Sono disponibili contatori cumulativi dedicati agli episodi di timeout e alle recovery automatiche.
 
 > **Stato:** i test automatici del protocollo e del recovery sono superati. È comunque raccomandata una validazione prolungata con una console WMR88/WMR88A reale prima dell'uso non presidiato.
 
@@ -57,8 +71,8 @@ sudo journalctl -u weewx -n 100 --no-pager
 ## Installazione dal pacchetto ZIP
 
 ```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.2-gp2.zip
-cd weewx-wmr100-wmr88-hardened-3.5.2-gp2
+unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
+cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
 sudo ./install-udev-rule.sh
 sudo weectl extension install . --yes
 sudo weectl station reconfigure --driver=user.wmr100
@@ -176,7 +190,7 @@ sudo journalctl -u weewx -f
 Deve comparire:
 
 ```text
-WMR100 driver version is 3.5.2-gp2
+WMR100 driver version is 3.5.5-gp5
 ```
 
 Test offline:

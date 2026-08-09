@@ -1,6 +1,6 @@
 # WMR88 / WMR88A research notes
 
-Research performed on 2026-08-06 before preparing release 3.5.2-gp2.
+Initial protocol research performed on 2026-08-06 for 3.5.2-gp2; WMR88 real-world framing validation added on 2026-08-07 for 3.5.3-gp3.
 
 ## WeeWX hardware support
 

@@ -38,7 +38,7 @@ sudo journalctl -u weewx -f
 
 Controllare:
 
-- versione `3.5.2-gp2`;
+- versione `3.5.6-gp6`;
 - assenza di traceback;
 - apertura del dispositivo USB;
 - invio di inizializzazione e richiesta dati live;

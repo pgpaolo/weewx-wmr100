@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="3.5.2-gp2"
+VERSION="3.5.6-gp6"
 BASENAME="weewx-wmr100-wmr88-hardened-$VERSION"
 OUT_DIR="${1:-$ROOT_DIR/dist}"
 STAGE_DIR="$(mktemp -d)"
@@ -21,8 +21,8 @@ mkdir -p "$OUT_DIR" "$STAGE_DIR/$BASENAME"
       -cf - .
 ) | tar -xf - -C "$STAGE_DIR/$BASENAME"
 
-find "$STAGE_DIR/$BASENAME" -type f -exec touch -d '2026-08-06 12:00:00 UTC' {} +
-find "$STAGE_DIR/$BASENAME" -type d -exec touch -d '2026-08-06 12:00:00 UTC' {} +
+find "$STAGE_DIR/$BASENAME" -type f -exec touch -d '2026-08-09 09:15:00 UTC' {} +
+find "$STAGE_DIR/$BASENAME" -type d -exec touch -d '2026-08-09 09:15:00 UTC' {} +
 
 ARCHIVE="$OUT_DIR/$BASENAME.zip"
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
