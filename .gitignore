@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Local WeeWX configuration
+weewx.conf
+*.local.conf
+
+# Developer traces / logs
+*.log
+*.jsonl
+logs/
+
+# Build/release output
+dist/
+build/
+*.zip
+*.sha256
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
