@@ -1,26 +1,40 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
 .venv/
 venv/
 
-# Local WeeWX configuration
+# Local WeeWX configuration and environment
 weewx.conf
 *.local.conf
+.env
+.env.*
+!.env.example
 
 # Developer traces / logs
 *.log
 *.jsonl
 logs/
 
-# Build/release output
-dist/
+# Build / release output
 build/
+dist/
 *.zip
 *.sha256
+SHA256SUMS.txt
 
-# Editors / OS
+# Editors / IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# Operating systems
 .DS_Store
 Thumbs.db
+Desktop.ini

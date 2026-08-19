@@ -1,116 +1,77 @@
 # Hardened WeeWX driver for WMR100 / WMR88
 
-[![Tests](https://github.com/OWNER/weewx-wmr100-wmr88-hardened/actions/workflows/tests.yml/badge.svg)](https://github.com/OWNER/weewx-wmr100-wmr88-hardened/actions/workflows/tests.yml)
+[![Tests](https://github.com/pgpaolo/weewx-wmr100/actions/workflows/tests.yml/badge.svg)](https://github.com/pgpaolo/weewx-wmr100/actions/workflows/tests.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.txt)
 
-Hardened WeeWX USB driver for Oregon Scientific stations that expose the WMR100 low-speed HID protocol, with an explicit operating profile for **WMR88 and WMR88A**.
+Hardened WeeWX USB driver for Oregon Scientific consoles that expose the WMR100 low-speed HID protocol, with an explicit operating profile for **WMR88 / WMR88A**.
 
-This repository is based on the WeeWX `wmr100.py` driver version `3.5.0`. Release `3.5.6-gp6` preserves the upstream meteorological mapping while adding USB recovery, packet validation, parser resynchronisation, model-aware WMR88 initialization and a rotating JSONL developer trace.
+Current release: **3.5.6-gp6**.
 
-> **Validation status:** automated protocol and recovery tests pass. Long-duration testing with real WMR88/WMR88A hardware is still recommended before unattended production use.
+The driver preserves the upstream meteorological mapping while adding staged USB recovery, packet validation, parser resynchronisation, model-aware WMR88 initialization and rotating JSONL developer diagnostics.
 
 Italian documentation: [README-IT.md](README-IT.md)
 
 ## Supported consoles
 
-| Console | Profile | Notes |
+| Console | Status | Notes |
 |---|---|---|
-| WMR88 / WMR88A | Primary | Live-data request enabled automatically; conservative watchdog |
-| WMR100 / WMR100N | Supported | Upstream-compatible initialization by default |
-| WMR180 / WMR180A | Supported | Same live-data request profile as WMR88 |
-| WMRS200 | Supported when using the WMR100 USB HID interface | No console altitude setting |
+| WMR88 / WMR88A | Primary profile | Live-data request enabled automatically; conservative watchdog |
+| WMR100 / WMR100N | Supported | Upstream-compatible initialization |
+| WMR180 / WMR180A | Supported | Uses the live-data request profile |
+| WMRS200 | Supported when exposing the WMR100 USB HID interface | No console altitude setting |
 
-The WMR200/WMR200A requires a different driver. WMR89/WMR89A must not be assumed compatible merely because they can use similar Oregon Scientific RF sensors.
-
-## Common sensors
-
-The WMR88/WMR88A family commonly uses:
-
-- WGR800 or equivalent wind sensor;
-- PCR800 or equivalent rain gauge;
-- THGR800 / THGR810 temperature and humidity sensors;
-- THWR800 temperature-only sensor;
-- UVN800 UV sensor;
-- up to three remote sensor channels in the WMR88 profile.
+**WMR200/WMR200A requires a different driver.** WMR89/WMR89A should not be assumed compatible only because they use similar Oregon Scientific RF sensors.
 
 ## Main improvements
 
-- Exposes the forecast code sent natively by the console pressure packet as the standard WeeWX `forecastIcon` observation.
-- Keeps WMR100 `barometer` and `altimeter` software-calculated by `StdWXCalculate`; the console relative-pressure value remains diagnostic-only.
-- Recovers a verified WMR88/WMR100 frame when a single residual leading `0xFF` is left at an `FF FF FF` boundary.
-- Keeps isolated USB polling timeouts informational; health changes only when the configured warning threshold is reached.
-- Emits `usb_read_recovered` when USB reads resume after a timeout episode.
-- Distinguishes ordinary USB polling timeouts from real I/O failures.
-- Re-sends initialization commands before performing a full USB reopen.
-- Releases, re-enumerates, reclaims and reinitializes the USB interface after prolonged silence.
-- Validates 8-byte HID reports and their declared payload size.
-- Bounds the packet buffer and resynchronizes on `FF FF` framing.
-- Verifies both checksum and expected packet length.
-- Traces malformed, unknown and suspicious packets without stopping acquisition.
-- Provides rotating JSONL developer diagnostics and health counters.
-- Keeps the upstream partial LOOP packet behavior to avoid repeating stale data or duplicating incremental rain.
+- exposes the native console forecast code as WeeWX `forecastIcon`;
+- keeps `barometer` and `altimeter` under `StdWXCalculate` control;
+- validates HID report size, packet length and checksum;
+- resynchronizes on `FF FF` framing and recovers a verified residual `0xFF` case;
+- distinguishes ordinary polling timeouts from real USB I/O failures;
+- re-sends initialization commands before a full USB reopen;
+- re-enumerates, reclaims and reinitializes the USB interface after prolonged silence;
+- traces malformed, unknown and suspicious packets without stopping acquisition;
+- provides rotating JSONL diagnostics and health counters;
+- preserves partial LOOP packet behaviour to avoid stale data and duplicated incremental rain.
 
 ## Requirements
 
-- WeeWX 5.x recommended; the extension layout is also compatible with the legacy WeeWX 4 extension installer.
-- Python version supported by the installed WeeWX release.
-- USB support already required by the standard WeeWX WMR100 driver.
-- Linux access to USB device `0fde:ca01`.
+- WeeWX 5.x recommended; legacy WeeWX 4 extension installation is also supported;
+- Python supported by the installed WeeWX release;
+- Linux USB access to device `0fde:ca01`;
+- standard WeeWX USB dependencies for WMR100-family hardware.
 
-## Installation from GitHub — WeeWX 5
-
-After publishing this directory as a GitHub repository, replace `OWNER` below with the GitHub account or organization name:
+## Install from GitHub — WeeWX 5
 
 ```bash
 sudo weectl extension install \
-  https://github.com/OWNER/weewx-wmr100-wmr88-hardened/archive/refs/heads/main.zip
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/heads/main.zip
 ```
 
-Install or refresh the optional USB permission rule:
+Optional USB permission helper:
 
 ```bash
-git clone https://github.com/OWNER/weewx-wmr100-wmr88-hardened.git
-cd weewx-wmr100-wmr88-hardened
+git clone https://github.com/pgpaolo/weewx-wmr100.git
+cd weewx-wmr100
 sudo ./install-udev-rule.sh
 ```
 
-Then configure the station:
+Configure the station:
 
 ```bash
 sudo weectl station reconfigure --driver=user.wmr100
-```
-
-Select or enter `WMR88` for the European/UK console, or `WMR88A` for the North American console. Restart WeeWX:
-
-```bash
 sudo systemctl restart weewx
 sudo journalctl -u weewx -n 100 --no-pager
 ```
 
-## Installation from a release ZIP — WeeWX 5
+Select `WMR88` for the European/UK console or `WMR88A` for the North American variant.
+
+## Install a tagged release
 
 ```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
-cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
-sudo ./install-udev-rule.sh
-sudo weectl extension install . --yes
-sudo weectl station reconfigure --driver=user.wmr100
-sudo systemctl restart weewx
-```
-
-The helper below installs the udev rule and the WeeWX extension, but intentionally leaves station reconfiguration interactive:
-
-```bash
-sudo ./install.sh
-```
-
-## WeeWX 4
-
-```bash
-sudo ./install-udev-rule.sh
-sudo weewx_extension --install=.
-sudo wee_config --reconfigure --driver=user.wmr100 --no-prompt
-sudo systemctl restart weewx
+sudo weectl extension install \
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/tags/v3.5.6-gp6.zip
 ```
 
 ## Recommended WMR88 configuration
@@ -157,7 +118,46 @@ sudo systemctl restart weewx
     archive_interval = 300
 ```
 
-The WMR88 model profile automatically enables `send_data_request` and the conservative watchdog values unless explicitly overridden.
+## Developer trace
+
+Prepare the trace file:
+
+```bash
+sudo install -d -o weewx -g weewx -m 0750 /var/log/weewx
+sudo touch /var/log/weewx/wmr100-developer-trace.jsonl
+sudo chown weewx:weewx /var/log/weewx/wmr100-developer-trace.jsonl
+sudo chmod 0640 /var/log/weewx/wmr100-developer-trace.jsonl
+```
+
+Follow it:
+
+```bash
+sudo tail -f /var/log/weewx/wmr100-developer-trace.jsonl
+```
+
+Summarize it:
+
+```bash
+sudo python3 tools/trace-summary.py /var/log/weewx/wmr100-developer-trace.jsonl
+```
+
+Keep `developer_trace_raw_reports = false` during normal operation.
+
+## Verification and tests
+
+Expected startup entry:
+
+```text
+WMR100 driver version is 3.5.6-gp6
+```
+
+Run the complete offline validation suite:
+
+```bash
+./scripts/run-tests.sh
+```
+
+GitHub Actions runs the same validation automatically on pull requests and pushes to `main`.
 
 ## USB permission check
 
@@ -168,101 +168,32 @@ DEV=$(lsusb -d 0fde:ca01 | awk '{print substr($4,1,3)}')
 ls -l "/dev/bus/usb/$BUS/$DEV"
 ```
 
-The WeeWX service account must have read/write access. Package-based WeeWX 5 installations may already provide suitable udev rules for supported core hardware; the included rule is therefore optional when permissions are already correct.
-
-## Developer trace
-
-```bash
-sudo install -d -o weewx -g weewx -m 0750 /var/log/weewx
-sudo touch /var/log/weewx/wmr100-developer-trace.jsonl
-sudo chown weewx:weewx /var/log/weewx/wmr100-developer-trace.jsonl
-sudo chmod 0640 /var/log/weewx/wmr100-developer-trace.jsonl
-```
-
-Follow the trace:
-
-```bash
-sudo tail -f /var/log/weewx/wmr100-developer-trace.jsonl
-```
-
-Generate a summary:
-
-```bash
-sudo python3 tools/trace-summary.py \
-  /var/log/weewx/wmr100-developer-trace.jsonl
-```
-
-Keep `developer_trace_raw_reports = false` for normal operation. Raw HID reports should be enabled only for short diagnostic captures.
-
-## Verification
-
-```bash
-sudo journalctl -u weewx -f
-```
-
-Expected startup entry:
-
-```text
-WMR100 driver version is 3.5.6-gp6
-```
-
-Run repository tests without a physical station:
-
-```bash
-python3 tests/test_wmr100.py
-python3 tests/test_install.py
-```
-
-Or:
-
-```bash
-./scripts/run-tests.sh
-```
-
-## Updating
-
-```bash
-sudo systemctl stop weewx
-sudo weectl extension install . --yes
-sudo systemctl start weewx
-```
-
-The extension installer replaces `bin/user/wmr100.py`. Back up `weewx.conf` before changing station configuration.
-
-## Uninstalling
-
-```bash
-sudo weectl extension uninstall wmr100-wmr88-hardened --yes
-sudo systemctl restart weewx
-```
-
-To remove the optional udev rule as well:
-
-```bash
-sudo ./uninstall-udev-rule.sh
-```
+The WeeWX service account must have read/write access to the device.
 
 ## Important operational notes
 
-- Sensor RF intervals are not USB polling intervals. A missing sensor packet does not by itself prove that the USB link failed.
-- LOOP packets remain partial by design. WeeWX accumulates them for archive generation.
+- Sensor RF intervals are not USB polling intervals.
+- LOOP packets remain partial by design; WeeWX accumulates them for archive generation.
 - Do not map diagnostic fields into the archive schema without adding the corresponding database columns.
-- Preserve a copy of the original driver and configuration during initial field validation.
+- Back up `weewx.conf` before changing station configuration.
+- Never commit local `weewx.conf`, JSONL traces, log files, credentials, private URLs or local network details.
 
 ## Repository layout
 
 ```text
 bin/user/wmr100.py          WeeWX driver
-install.py                  WeeWX ExtensionInstaller metadata
-examples/                   ready-to-copy configuration examples
+install.py                  ExtensionInstaller metadata
+examples/                   configuration examples
 util/udev/rules.d/          optional USB permission rule
 docs/                       configuration, testing and research notes
 tests/                      offline regression tests
 tools/trace-summary.py      JSONL diagnostic summary
+scripts/run-tests.sh        repository validation suite
 scripts/build-release.sh    deterministic release archive builder
-GITHUB-PUBLISH-IT.md        step-by-step GitHub publishing guide
 ```
 
 ## License and attribution
 
-Distributed under the GNU General Public License version 3 or later. The upstream copyright notice from Tom Keffer is preserved in the driver. See [LICENSE.txt](LICENSE.txt) and [NOTICE.md](NOTICE.md).
+Distributed under the GNU General Public License version 3 or later. Upstream WeeWX copyright notices are preserved in the driver.
+
+See [LICENSE.txt](LICENSE.txt), [NOTICE.md](NOTICE.md), [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

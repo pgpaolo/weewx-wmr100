@@ -1,0 +1,62 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.9"
+          - "3.11"
+          - "3.13"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Ensure private/local configuration is absent
+        run: |
+          test ! -f weewx.conf
+          ! find . -type f \( -name '*.jsonl' -o -name '*.log' \) -print -quit | grep -q .
+
+      - name: Run repository validation
+        run: ./scripts/run-tests.sh
+
+      - name: Build deterministic release archive
+        if: matrix.python-version == '3.11'
+        run: ./scripts/build-release.sh
+
+      - name: Upload release archive
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: weewx-wmr100-3.5.6-gp6
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14

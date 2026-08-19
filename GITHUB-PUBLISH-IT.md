@@ -1,92 +1,56 @@
-# Pubblicazione del repository su GitHub
+# Gestione e pubblicazione del repository GitHub
 
-Nome repository consigliato:
-
-```text
-weewx-wmr100-wmr88-hardened
-```
-
-## 1. Preparazione
-
-Estrarre il pacchetto e aprire la directory:
-
-```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
-cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
-```
-
-Nel file `README.md` sostituire tutte le occorrenze di `OWNER` con il proprio nome utente o organizzazione GitHub:
-
-```bash
-sed -i 's#OWNER#NOME_UTENTE_GITHUB#g' README.md
-```
-
-## 2. Creazione repository
-
-Creare su GitHub un repository pubblico vuoto chiamato:
+Repository pubblico corrente:
 
 ```text
-weewx-wmr100-wmr88-hardened
+https://github.com/pgpaolo/weewx-wmr100
 ```
 
-Non inizializzarlo con README, licenza o `.gitignore`, perché questi file sono già inclusi.
+Branch predefinito: `main`.
 
-## 3. Primo push
+## 1. Flusso consigliato per le modifiche
+
+Non modificare direttamente `main` quando è attiva la protezione del branch.
+
+Creare un branch dedicato:
 
 ```bash
-git init -b main
+git checkout main
+git pull
+git checkout -b feature/nome-modifica
+```
+
+Dopo le modifiche:
+
+```bash
 git add .
-git commit -m "Release 3.5.6-gp6"
-git remote add origin \
-  https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened.git
-git push -u origin main
+git commit -m "Descrizione modifica"
+git push -u origin feature/nome-modifica
 ```
 
-## 4. Tag della release
+Aprire quindi una Pull Request verso `main` e attendere il completamento dei test GitHub Actions.
 
-```bash
-git tag -a v3.5.6-gp6 -m "WMR100/WMR88 hardened driver 3.5.6-gp6"
-git push origin v3.5.6-gp6
-```
+## 2. GitHub Actions
 
-## 5. Release GitHub
+Il workflow `Tests` deve risultare verde prima del merge.
 
-Nella pagina del repository:
+La CI esegue:
 
-1. aprire **Releases**;
-2. scegliere **Draft a new release**;
-3. selezionare il tag `v3.5.6-gp6`;
-4. titolo: `WMR100/WMR88 hardened driver 3.5.6-gp6`;
-5. copiare il contenuto di `RELEASE-NOTES-3.5.6-gp6.md`;
-6. allegare:
-   - `weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip`;
-   - `weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip.sha256`.
+- compilazione sintattica Python;
+- test parser e decoder;
+- test profili WMR88/WMR88A;
+- test recovery USB;
+- test installer WeeWX;
+- controllo sintassi degli script shell;
+- generazione dell'archivio release deterministico.
 
-## 6. Verifica GitHub Actions
+Per la build di riferimento la CI usa `scripts/run-tests.sh` e `scripts/build-release.sh`.
 
-Aprire la scheda **Actions**. Il workflow `Tests` deve eseguire:
-
-- compilazione Python;
-- test del parser e dei decoder;
-- test dei profili WMR88/WMR88A;
-- test del recovery USB;
-- test dell'installer WeeWX;
-- generazione dell'archivio di release.
-
-## 7. Comando di installazione pubblico
-
-Dopo la pubblicazione, il comando da inserire nella descrizione del repository è:
+## 3. Installazione pubblica dal branch main
 
 ```bash
 sudo weectl extension install \
-  https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened/archive/refs/heads/main.zip
-```
-
-Per una release versionata:
-
-```bash
-sudo weectl extension install \
-  https://github.com/NOME_UTENTE_GITHUB/weewx-wmr100-wmr88-hardened/archive/refs/tags/v3.5.6-gp6.zip
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/heads/main.zip
 ```
 
 Successivamente:
@@ -96,13 +60,71 @@ sudo weectl station reconfigure --driver=user.wmr100
 sudo systemctl restart weewx
 ```
 
+## 4. Creazione della release 3.5.6-gp6
+
+Tag previsto:
+
+```text
+v3.5.6-gp6
+```
+
+Titolo consigliato:
+
+```text
+WMR100/WMR88 hardened driver 3.5.6-gp6
+```
+
+Per creare il tag da riga di comando:
+
+```bash
+git checkout main
+git pull
+git tag -a v3.5.6-gp6 -m "WMR100/WMR88 hardened driver 3.5.6-gp6"
+git push origin v3.5.6-gp6
+```
+
+Su GitHub:
+
+1. aprire **Releases**;
+2. scegliere **Draft a new release**;
+3. selezionare `v3.5.6-gp6`;
+4. usare il titolo sopra;
+5. copiare le note da `RELEASE-NOTES-3.5.6-gp6.md`;
+6. allegare l'archivio ZIP e il relativo SHA-256 prodotti dalla CI o da `scripts/build-release.sh`;
+7. pubblicare la release come stabile se i test sono tutti verdi.
+
+## 5. Installazione della release versionata
+
+```bash
+sudo weectl extension install \
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/tags/v3.5.6-gp6.zip
+```
+
+## 6. File che non devono essere pubblicati
+
+Il `.gitignore` esclude le principali categorie locali, ma prima di ogni push verificare comunque di non includere:
+
+- `weewx.conf` reale;
+- password, token o credenziali;
+- trace `*.jsonl`;
+- file `*.log`;
+- URL privati o hostname interni;
+- dettagli della rete locale;
+- directory di build o ambienti virtuali Python.
+
+## 7. Pulizia branch
+
+Dopo il merge della Pull Request eliminare il branch temporaneo, salvo necessità specifiche di mantenimento.
+
+Il repository dovrebbe normalmente mantenere `main` come unico branch permanente.
+
 ## 8. Descrizione breve consigliata
 
 ```text
 Hardened WeeWX USB driver for Oregon Scientific WMR100/WMR88/WMR88A stations, with staged USB recovery, packet validation and rotating JSONL diagnostics.
 ```
 
-Topic GitHub consigliati:
+Topic consigliati:
 
 ```text
 weewx weather-station oregon-scientific wmr88 wmr88a wmr100 raspberry-pi usb python
