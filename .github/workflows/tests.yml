@@ -44,11 +44,11 @@ jobs:
           ! find . -type f \( -name '*.jsonl' -o -name '*.log' \) -print -quit | grep -q .
 
       - name: Run repository validation
-        run: ./scripts/run-tests.sh
+        run: bash ./scripts/run-tests.sh
 
       - name: Build deterministic release archive
         if: matrix.python-version == '3.11'
-        run: ./scripts/build-release.sh
+        run: bash ./scripts/build-release.sh
 
       - name: Upload release archive
         if: matrix.python-version == '3.11'
