@@ -1,99 +1,70 @@
 # Driver WeeWX irrobustito per WMR100 / WMR88
 
-Driver USB WeeWX per le console Oregon Scientific che espongono il protocollo HID della famiglia WMR100, con un profilo operativo esplicito per **WMR88 e WMR88A**.
+Driver USB WeeWX per le console Oregon Scientific che espongono il protocollo HID della famiglia WMR100, con profilo operativo esplicito per **WMR88 / WMR88A**.
 
-La release `3.5.6-gp6` deriva dal driver WeeWX `wmr100.py` 3.5.0 e conserva la mappatura meteorologica originale. Aggiunge recovery USB, validazione dei pacchetti, resincronizzazione del flusso, inizializzazione specifica WMR88 e trace sviluppatore JSONL ruotato.
+Release corrente: **3.5.6-gp6**.
 
-### Novità 3.5.6-gp6
+La release conserva la mappatura meteorologica originale e aggiunge recovery USB a stadi, validazione dei pacchetti, resincronizzazione del parser, inizializzazione specifica WMR88 e diagnostica sviluppatore JSONL ruotata.
 
-- Espone come `forecastIcon` il codice di previsione trasmesso nativamente dalla console nel pacchetto pressione `0x46`.
-- Non altera `barometer` o `altimeter`: per la famiglia WMR100 restano calcolati da WeeWX `StdWXCalculate`, preservando il comportamento corretto e stabile.
-- Mantiene `console_barometer` come dato interno/diagnostico, senza inserirlo negli archivi con un nome semanticamente errato.
+## Console supportate
 
-- Recupero verificato del raro caso `FF FF FF`: un singolo `0xFF` residuo viene rimosso solo se il frame risultante ha tipo noto, lunghezza corretta e checksum valido.
-- Nuovo evento diagnostico `packet_leading_ff_recovered` e relativo contatore.
+- **WMR88 / WMR88A** — profilo prioritario, richiesta dati live automatica e watchdog conservativo;
+- WMR100 / WMR100N;
+- WMR180 / WMR180A;
+- WMRS200 quando espone la stessa interfaccia USB HID WMR100.
 
-- I timeout USB isolati restano informativi e non portano più lo stato del driver a `degraded`.
-- Lo stato passa a `warning` soltanto al raggiungimento di `timeout_warning_threshold`.
-- Alla ripresa della lettura viene emesso l'evento `usb_read_recovered`, con episodio, numero di timeout recuperati e tempi di recovery.
-- Sono disponibili contatori cumulativi dedicati agli episodi di timeout e alle recovery automatiche.
+**WMR200/WMR200A usa un driver diverso.** WMR89/WMR89A non va considerata compatibile solo perché condivide sensori Oregon Scientific simili.
 
-> **Stato:** i test automatici del protocollo e del recovery sono superati. È comunque raccomandata una validazione prolungata con una console WMR88/WMR88A reale prima dell'uso non presidiato.
+## Miglioramenti principali
 
-## Console gestite
+- espone come `forecastIcon` il codice di previsione nativo della console;
+- lascia `barometer` e `altimeter` a `StdWXCalculate`;
+- valida report HID, lunghezza frame e checksum;
+- resincronizza il flusso su framing `FF FF` e recupera il raro residuo `0xFF` solo dopo verifica completa del frame;
+- distingue timeout USB ordinari da veri errori I/O;
+- reinvia i comandi di inizializzazione prima di una riapertura USB completa;
+- può rieseguire enumerazione, claim e inizializzazione USB dopo silenzio prolungato;
+- traccia pacchetti malformati, sconosciuti o sospetti senza interrompere l'acquisizione;
+- fornisce trace JSONL ruotato e contatori di salute;
+- mantiene i LOOP parziali per evitare dati obsoleti e duplicazione della pioggia incrementale.
 
-- **WMR88 / WMR88A:** profilo prioritario; richiesta dati live automatica e watchdog conservativo.
-- WMR100 / WMR100N.
-- WMR180 / WMR180A.
-- WMRS200 quando espone la medesima interfaccia USB HID.
+## Requisiti
 
-WMR200/WMR200A usa un driver diverso. WMR89/WMR89A non deve essere considerata compatibile soltanto perché condivide sensori radio simili.
+- WeeWX 5.x consigliato; supportata anche l'installazione legacy WeeWX 4;
+- Python compatibile con la versione WeeWX installata;
+- accesso Linux al dispositivo USB `0fde:ca01`;
+- dipendenze USB già richieste dal driver WMR100 standard.
 
-## Sensori tipici WMR88/WMR88A
-
-- WGR800 o equivalente per il vento;
-- PCR800 o equivalente per la pioggia;
-- THGR800 / THGR810 per temperatura e umidità;
-- THWR800 per la sola temperatura;
-- UVN800 per l'indice UV;
-- fino a tre canali remoti nel profilo WMR88.
-
-## Installazione diretta da GitHub — WeeWX 5
-
-Dopo avere pubblicato il repository, sostituire `OWNER` con l'account o l'organizzazione GitHub:
+## Installazione da GitHub — WeeWX 5
 
 ```bash
 sudo weectl extension install \
-  https://github.com/OWNER/weewx-wmr100-wmr88-hardened/archive/refs/heads/main.zip
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/heads/main.zip
 ```
 
-Clonare il repository e installare, se necessario, la regola USB:
+Regola USB opzionale:
 
 ```bash
-git clone https://github.com/OWNER/weewx-wmr100-wmr88-hardened.git
-cd weewx-wmr100-wmr88-hardened
+git clone https://github.com/pgpaolo/weewx-wmr100.git
+cd weewx-wmr100
 sudo ./install-udev-rule.sh
 ```
 
-Configurare la stazione:
+Configurazione della stazione:
 
 ```bash
 sudo weectl station reconfigure --driver=user.wmr100
-```
-
-Usare `WMR88` per il modello europeo/UK oppure `WMR88A` per la variante nordamericana. Riavviare:
-
-```bash
 sudo systemctl restart weewx
 sudo journalctl -u weewx -n 100 --no-pager
 ```
 
-## Installazione dal pacchetto ZIP
+Usare `WMR88` per la console europea/UK oppure `WMR88A` per la variante nordamericana.
+
+## Installazione di una release versionata
 
 ```bash
-unzip weewx-wmr100-wmr88-hardened-3.5.6-gp6.zip
-cd weewx-wmr100-wmr88-hardened-3.5.6-gp6
-sudo ./install-udev-rule.sh
-sudo weectl extension install . --yes
-sudo weectl station reconfigure --driver=user.wmr100
-sudo systemctl restart weewx
-```
-
-In alternativa:
-
-```bash
-sudo ./install.sh
-```
-
-Lo script installa regola udev ed estensione, ma lascia volutamente interattiva la riconfigurazione della stazione.
-
-## WeeWX 4
-
-```bash
-sudo ./install-udev-rule.sh
-sudo weewx_extension --install=.
-sudo wee_config --reconfigure --driver=user.wmr100 --no-prompt
-sudo systemctl restart weewx
+sudo weectl extension install \
+  https://github.com/pgpaolo/weewx-wmr100/archive/refs/tags/v3.5.6-gp6.zip
 ```
 
 ## Configurazione consigliata WMR88
@@ -140,23 +111,6 @@ sudo systemctl restart weewx
     archive_interval = 300
 ```
 
-Il profilo `WMR88`/`WMR88A` applica automaticamente la richiesta dati live e le soglie conservative, salvo override esplicito.
-
-## Perché `archive_interval = 300`
-
-I sensori trasmettono separatamente e con tempi propri. Il termo-igrometro esterno può trasmettere oltre il minuto; un archivio da 60 secondi può quindi non includere ogni volta tutti i tipi di misura. Il driver non replica artificialmente dati vecchi e non trasforma i LOOP parziali in LOOP completi, evitando soprattutto di duplicare l'incremento `rain`.
-
-## Permessi USB
-
-```bash
-lsusb -d 0fde:ca01
-BUS=$(lsusb -d 0fde:ca01 | awk '{print $2}')
-DEV=$(lsusb -d 0fde:ca01 | awk '{print substr($4,1,3)}')
-ls -l "/dev/bus/usb/$BUS/$DEV"
-```
-
-L'utente del servizio WeeWX deve avere lettura e scrittura. Le installazioni WeeWX 5 tramite pacchetto possono avere già una regola adeguata; in tal caso quella inclusa nel repository è facoltativa.
-
 ## Trace sviluppatore
 
 ```bash
@@ -175,52 +129,62 @@ sudo tail -f /var/log/weewx/wmr100-developer-trace.jsonl
 Riepilogo:
 
 ```bash
-sudo python3 tools/trace-summary.py \
-  /var/log/weewx/wmr100-developer-trace.jsonl
+sudo python3 tools/trace-summary.py /var/log/weewx/wmr100-developer-trace.jsonl
 ```
 
-Lasciare normalmente `developer_trace_raw_reports = false`. Attivarlo solo per catture brevi.
+Lasciare normalmente `developer_trace_raw_reports = false`.
 
-## Verifica
+## Verifica e test
 
-```bash
-sudo journalctl -u weewx -f
-```
-
-Deve comparire:
+All'avvio deve comparire:
 
 ```text
-WMR100 driver version is 3.5.5-gp5
+WMR100 driver version is 3.5.6-gp6
 ```
 
-Test offline:
+Suite completa offline:
 
 ```bash
 ./scripts/run-tests.sh
 ```
 
-## Disinstallazione
+GitHub Actions esegue automaticamente la stessa validazione sulle Pull Request e sui push verso `main`.
+
+## Controllo permessi USB
 
 ```bash
-sudo weectl extension uninstall wmr100-wmr88-hardened --yes
-sudo ./uninstall-udev-rule.sh
-sudo systemctl restart weewx
+lsusb -d 0fde:ca01
+BUS=$(lsusb -d 0fde:ca01 | awk '{print $2}')
+DEV=$(lsusb -d 0fde:ca01 | awk '{print substr($4,1,3)}')
+ls -l "/dev/bus/usb/$BUS/$DEV"
 ```
+
+L'utente del servizio WeeWX deve avere permessi di lettura e scrittura sul dispositivo.
+
+## Note operative importanti
+
+- Gli intervalli RF dei sensori non coincidono con il polling USB.
+- I LOOP restano parziali per progetto; WeeWX li accumula per generare gli archivi.
+- Non mappare campi diagnostici nello schema archivio senza creare le corrispondenti colonne database.
+- Fare sempre una copia di `weewx.conf` prima di modificare la configurazione della stazione.
+- Non pubblicare mai `weewx.conf`, trace JSONL, log, credenziali, URL privati o dettagli della rete locale.
 
 ## Contenuto del repository
 
 ```text
 bin/user/wmr100.py          driver WeeWX
-install.py                  installer ufficiale delle estensioni WeeWX
-examples/                   configurazioni pronte
-docs/                       configurazione, collaudo e note di ricerca
-util/udev/rules.d/          regola opzionale per i permessi USB
-tests/                      test automatici senza console fisica
-tools/trace-summary.py      riepilogo del trace JSONL
-scripts/build-release.sh    generazione ZIP di release e SHA-256
-GITHUB-PUBLISH-IT.md        guida passo passo alla pubblicazione GitHub
+install.py                  metadata ExtensionInstaller
+examples/                   configurazioni di esempio
+util/udev/rules.d/          regola opzionale permessi USB
+docs/                       configurazione, collaudo e ricerca
+tests/                      test regressivi offline
+tools/trace-summary.py      riepilogo trace JSONL
+scripts/run-tests.sh        validazione repository
+scripts/build-release.sh    generazione archivio release deterministico
 ```
 
-## Licenza
+## Licenza e attribuzioni
 
-GNU General Public License versione 3 o successiva. Gli avvisi di copyright del driver WeeWX originale sono mantenuti. Vedere `LICENSE.txt` e `NOTICE.md`.
+GNU General Public License versione 3 o successiva. Gli avvisi di copyright WeeWX originali sono mantenuti nel driver.
+
+Vedere [LICENSE.txt](LICENSE.txt), [NOTICE.md](NOTICE.md), [SECURITY.md](SECURITY.md) e [CONTRIBUTING.md](CONTRIBUTING.md).
